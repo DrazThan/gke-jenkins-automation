@@ -1,0 +1,5 @@
+project     = "poetic-shell-417622"
+region      = "us-central1"
+zone        = "us-central1-a"
+cluster_name = "python-jenkins-test"
+public_ip   = "99.228.227.180"
