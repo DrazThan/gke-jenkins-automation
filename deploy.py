@@ -1,104 +1,127 @@
 import os
 import subprocess
 import json
+import sys
+from contextlib import contextmanager
+
+@contextmanager
+def change_directory(path):
+    original_dir = os.getcwd()
+    try:
+        os.chdir(path)
+        yield
+    finally:
+        os.chdir(original_dir)
+
+def run_command(command, error_message):
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        print(f"{error_message}: {e}")
+        print(f"Error output: {e.stderr}")
+        return None
+
+def parse_json(json_string, error_message):
+    try:
+        return json.loads(json_string)
+    except json.JSONDecodeError:
+        print(f"{error_message}. This might indicate no resources exist.")
+        return None
 
 def read_tfvars(filepath):
     vars = {}
-    with open(filepath) as f:
-        for line in f:
-            if '=' in line:
-                name, value = line.split('=', 1)
-                vars[name.strip()] = value.strip().strip('"')
+    try:
+        with open(filepath, 'r') as f:
+            for line in f:
+                if '=' in line:
+                    name, value = line.split('=', 1)
+                    vars[name.strip()] = value.strip().strip('"')
+    except IOError as e:
+        print(f"Error reading tfvars file: {e}")
+        sys.exit(1)
     return vars
 
+def check_resource_exists(command, resource_name):
+    output = run_command(command, f"Error checking {resource_name} existence")
+    if output is None:
+        return False
+    parsed = parse_json(output, f"No valid JSON returned when checking {resource_name} existence")
+    return bool(parsed)
+
 def check_disk_exists():
-    result = subprocess.run(['gcloud', 'compute', 'disks', 'list', '--filter=name=jenkins-disk', '--format=json'], capture_output=True, text=True)
-    disks = json.loads(result.stdout)
-    return bool(disks)
+    return check_resource_exists(
+        ['gcloud', 'compute', 'disks', 'list', '--filter=name=jenkins-disk', '--format=json'],
+        'disk'
+    )
 
 def check_cluster_exists():
-    result = subprocess.run(['gcloud', 'container', 'clusters', 'list', '--filter=name=my-gke-cluster', '--format=json'], capture_output=True, text=True)
-    clusters = json.loads(result.stdout)
-    return bool(clusters)
+    return check_resource_exists(
+        ['gcloud', 'container', 'clusters', 'list', '--filter=name=my-gke-cluster', '--format=json'],
+        'cluster'
+    )
 
 def check_pvc_exists(namespace, pvc_name):
-    result = subprocess.run(['kubectl', 'get', 'pvc', pvc_name, '-n', namespace, '-o', 'json'], capture_output=True, text=True)
-    if result.returncode == 0:
-        return True
-    else:
-        return False
+    output = run_command(['kubectl', 'get', 'pvc', pvc_name, '-n', namespace, '-o', 'json'], "Error checking PVC existence")
+    return output is not None
 
-def install_ansible():
-    try:
-        result = subprocess.run(['which', 'ansible-playbook'], capture_output=True, text=True)
-        if result.returncode != 0:
-            print("Ansible is not installed. Installing Ansible...")
-            subprocess.run(['pip3', 'install', 'ansible'])
+def install_dependency(dependency, install_command):
+    if run_command(['which', dependency], f"Checking {dependency} installation") is None:
+        print(f"{dependency} is not installed. Installing {dependency}...")
+        if run_command(install_command, f"Error during {dependency} installation") is None:
+            sys.exit(1)
+        if dependency == 'ansible-playbook':
             os.environ["PATH"] += os.pathsep + os.path.expanduser("~/.local/bin")
-    except Exception as e:
-        print(f"Error during Ansible installation: {e}")
 
-def install_kubernetes_library():
-    try:
-        subprocess.run(['pip3', 'install', 'kubernetes'])
-    except Exception as e:
-        print(f"Error installing Kubernetes library: {e}")
+def create_or_configure_resource(exists, create_func, resource_name):
+    if not exists:
+        print(f"Creating {resource_name}...")
+        create_func()
+    else:
+        print(f"{resource_name} already exists. Skipping creation.")
 
 def create_disk():
-    os.chdir('terraform')
-    subprocess.run(['terraform', 'init'])
-    subprocess.run(['terraform', 'apply', '-auto-approve', '-var-file=variables.tfvars', '-target=google_compute_disk.jenkins_disk'])
-    os.chdir('..')
+    with change_directory('terraform'):
+        run_command(['terraform', 'init'], "Error initializing Terraform")
+        run_command(['terraform', 'apply', '-auto-approve', '-var-file=variables.tfvars', '-target=google_compute_disk.jenkins_disk'], "Error creating disk")
 
 def create_cluster():
-    os.chdir('terraform')
-    subprocess.run(['terraform', 'apply', '-auto-approve', '-var-file=variables.tfvars', '-target=google_container_cluster.primary'])
-    os.chdir('..')
+    with change_directory('terraform'):
+        run_command(['terraform', 'apply', '-auto-approve', '-var-file=variables.tfvars', '-target=google_container_cluster.primary'], "Error creating cluster")
 
 def create_pvc():
-    subprocess.run(['kubectl', 'apply', '-f', 'ansible/jenkins_pvc.yaml'])
+    run_command(['kubectl', 'apply', '-f', 'ansible/jenkins_pvc.yaml'], "Error creating PVC")
 
 def create_role_binding():
-    subprocess.run(['kubectl', 'apply', '-f', 'ansible/jenkins-role-binding.yaml'])
+    run_command(['kubectl', 'apply', '-f', 'ansible/jenkins-role-binding.yaml'], "Error creating role binding")
 
 def run_ansible(vars):
-    install_ansible()
-    install_kubernetes_library()
-    try:
-        env_vars = os.environ.copy()
-        subprocess.run([
-            'ansible-playbook',
-            'ansible/deploy_jenkins.yml',
-            '--extra-vars', f"project={vars['project']} zone={vars['zone']} cluster_name={vars['cluster_name']}"
-        ], env=env_vars)
-    except FileNotFoundError as e:
-        print(f"Ansible playbook not found: {e}")
-    except Exception as e:
-        print(f"Error running Ansible playbook: {e}")
+    env_vars = os.environ.copy()
+    run_command([
+        'ansible-playbook',
+        'ansible/deploy_jenkins.yml',
+        '--extra-vars', f"project={vars['project']} zone={vars['zone']} cluster_name={vars['cluster_name']}"
+    ], "Error running Ansible playbook", env=env_vars)
 
 def main():
+    # Check and install dependencies
+    install_dependency('ansible-playbook', ['pip3', 'install', 'ansible'])
+    install_dependency('kubectl', ['gcloud', 'components', 'install', 'kubectl'])
+    install_dependency('terraform', ['snap', 'install', 'terraform', '--classic'])
+    run_command(['pip3', 'install', 'kubernetes'], "Error installing Kubernetes library")
+
+    # Read variables
     vars = read_tfvars('terraform/variables.tfvars')
+
+    # Check resource existence
     disk_exists = check_disk_exists()
     cluster_exists = check_cluster_exists()
     pvc_exists = check_pvc_exists('jenkins', 'jenkins-pvc')
 
-    if not disk_exists:
-        print("Creating disk...")
-        create_disk()
-    else:
-        print("Disk 'jenkins-disk' already exists. Skipping disk creation.")
-
-    if not cluster_exists:
-        print("Creating GKE cluster...")
-        create_cluster()
-    else:
-        print("GKE cluster 'my-gke-cluster' already exists. Skipping cluster creation.")
-
-    if not pvc_exists:
-        print("Creating PVC...")
-        create_pvc()
-    else:
-        print("PVC 'jenkins-pvc' already exists. Skipping PVC creation.")
+    # Create or configure resources
+    create_or_configure_resource(disk_exists, create_disk, "Disk 'jenkins-disk'")
+    create_or_configure_resource(cluster_exists, create_cluster, "GKE cluster 'my-gke-cluster'")
+    create_or_configure_resource(pvc_exists, create_pvc, "PVC 'jenkins-pvc'")
 
     print("Creating ClusterRoleBinding for Jenkins...")
     create_role_binding()
