@@ -206,12 +206,13 @@ def main():
     run_command(['pip3', 'install', 'kubernetes'], "Error installing Kubernetes library")
     run_command(['pip3', 'install', 'PyYAML'], "Error installing PyYAML library")
 
-    # Create or configure cluster first
-    cluster_exists = check_cluster_exists(vars['cluster_name'])
-    create_or_configure_resource(cluster_exists, create_cluster, f"GKE cluster '{vars['cluster_name']}'")
 
     # Read variables
     vars = read_tfvars('terraform/variables.tfvars')
+
+   # Create or configure cluster first
+    cluster_exists = check_cluster_exists(vars['cluster_name'])
+    create_or_configure_resource(cluster_exists, create_cluster, f"GKE cluster '{vars['cluster_name']}'")
 
     # Set Kubernetes context
     set_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name'])
