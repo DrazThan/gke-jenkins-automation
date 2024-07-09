@@ -8,6 +8,7 @@ resource "google_container_cluster" "primary" {
   name               = var.cluster_name
   location           = var.zone
   initial_node_count = 3
+  deletion_protection = false
 }
 
 resource "google_compute_disk" "jenkins_disk" {
