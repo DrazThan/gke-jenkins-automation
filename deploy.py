@@ -13,9 +13,9 @@ def change_directory(path):
     finally:
         os.chdir(original_dir)
 
-def run_command(command, error_message):
+def run_command(command, error_message, env=None):
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        result = subprocess.run(command, capture_output=True, text=True, check=True, env=env)
         return result.stdout
     except subprocess.CalledProcessError as e:
         print(f"{error_message}: {e}")
@@ -55,9 +55,9 @@ def check_disk_exists():
         'disk'
     )
 
-def check_cluster_exists():
+def check_cluster_exists(cluster_name):
     return check_resource_exists(
-        ['gcloud', 'container', 'clusters', 'list', '--filter=name=my-gke-cluster', '--format=json'],
+        ['gcloud', 'container', 'clusters', 'list', f'--filter=name={cluster_name}', '--format=json'],
         'cluster'
     )
 
@@ -115,12 +115,12 @@ def main():
 
     # Check resource existence
     disk_exists = check_disk_exists()
-    cluster_exists = check_cluster_exists()
+    cluster_exists = check_cluster_exists(vars['cluster_name'])
     pvc_exists = check_pvc_exists('jenkins', 'jenkins-pvc')
 
     # Create or configure resources
     create_or_configure_resource(disk_exists, create_disk, "Disk 'jenkins-disk'")
-    create_or_configure_resource(cluster_exists, create_cluster, "GKE cluster 'my-gke-cluster'")
+    create_or_configure_resource(cluster_exists, create_cluster, f"GKE cluster '{vars['cluster_name']}'")
     create_or_configure_resource(pvc_exists, create_pvc, "PVC 'jenkins-pvc'")
 
     print("Creating ClusterRoleBinding for Jenkins...")
