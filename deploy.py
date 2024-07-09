@@ -214,11 +214,23 @@ def main():
     vars = read_tfvars('terraform/variables.tfvars')
 
    # Create or configure cluster first
-    cluster_exists = check_cluster_exists(vars['cluster_name'])
-    create_or_configure_resource(cluster_exists, create_cluster, f"GKE cluster '{vars['cluster_name']}'")
+    def main():
+    # ... (previous code remains the same)
+
+    # Create or configure cluster first
+        cluster_exists = check_cluster_exists(vars['cluster_name'])
+        if not cluster_exists:
+            print(f"Creating GKE cluster '{vars['cluster_name']}'...")
+            if create_cluster() is None:
+                print("Failed to create cluster. Exiting.")
+                sys.exit(1)
+        else:
+            print(f"GKE cluster '{vars['cluster_name']}' already exists.")
 
     # Set Kubernetes context
-    set_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name'])
+    if set_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']) is None:
+        print("Failed to set Kubernetes context. Exiting.")
+        sys.exit(1)
 
     # Verify Kubernetes context
     if not verify_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']):
@@ -227,19 +239,23 @@ def main():
 
     # Check resource existence
     disk_exists = check_disk_exists()
-    cluster_exists = check_cluster_exists(vars['cluster_name'])
     pvc_exists = check_pvc_exists(vars['project'], vars['zone'], vars['cluster_name'], 'jenkins', 'jenkins-pvc')
 
     # Create or configure resources
     create_or_configure_resource(disk_exists, create_disk, "Disk 'jenkins-disk'")
-    create_or_configure_resource(cluster_exists, create_cluster, f"GKE cluster '{vars['cluster_name']}'")
     create_or_configure_resource(pvc_exists, create_pvc, "PVC 'jenkins-pvc'")
 
     print("Creating ClusterRoleBinding for Jenkins...")
-    create_role_binding()
+    if create_role_binding() is None:
+        print("Failed to create ClusterRoleBinding. Exiting.")
+        sys.exit(1)
 
     print("Deploying Jenkins...")
-    run_ansible(vars)
+    if run_ansible(vars) is None:
+        print("Failed to deploy Jenkins. Exiting.")
+        sys.exit(1)
+
+    print("Deployment completed successfully.")
 
 if __name__ == "__main__":
     main()
