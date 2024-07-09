@@ -133,11 +133,14 @@ def create_role_binding():
 
 def create_temp_ansible_inventory(project, zone):
     inventory = {
-        'plugin': 'gcp_compute',
-        'projects': [project],
-        'zones': [zone],
-        'filters': [],
-        'auth_kind': 'application'
+        'all': {
+            'hosts': ['localhost'],
+            'vars': {
+                'ansible_connection': 'local',
+                'gcp_project': project,
+                'gcp_zone': zone,
+            }
+        }
     }
     
     fd, path = tempfile.mkstemp(prefix='ansible_inventory_', suffix='.yml')
