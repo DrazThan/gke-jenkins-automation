@@ -3,6 +3,7 @@ import subprocess
 import json
 import sys
 import tempfile
+import yaml
 from contextlib import contextmanager
 
 # Context manager for changing directories safely
@@ -130,14 +131,38 @@ def create_pvc():
 def create_role_binding():
     run_kubectl_command(['apply', '-f', 'ansible/jenkins-role-binding.yaml'], "Error creating role binding")
 
+def create_temp_ansible_inventory(project, zone):
+    inventory = {
+        'plugin': 'gcp_compute',
+        'projects': [project],
+        'zones': [zone],
+        'filters': [],
+        'auth_kind': 'application'
+    }
+    
+    fd, path = tempfile.mkstemp(prefix='ansible_inventory_', suffix='.yml')
+    with os.fdopen(fd, 'w') as f:
+        yaml.dump(inventory, f)
+    
+    return path
+
 # Function to run Ansible playbook
 def run_ansible(vars):
     env_vars = os.environ.copy()
-    run_command([
-        'ansible-playbook',
-        'ansible/deploy_jenkins.yml',
-        '--extra-vars', f"project={vars['project']} zone={vars['zone']} cluster_name={vars['cluster_name']}"
-    ], "Error running Ansible playbook", env=env_vars)
+    
+    # Create temporary Ansible inventory
+    inventory_path = create_temp_ansible_inventory(vars['project'], vars['zone'])
+    
+    try:
+        run_command([
+            'ansible-playbook',
+            '-i', inventory_path,
+            'ansible/deploy_jenkins.yml',
+            '--extra-vars', f"project={vars['project']} zone={vars['zone']} cluster_name={vars['cluster_name']}"
+        ], "Error running Ansible playbook", env=env_vars)
+    finally:
+        # Clean up the temporary inventory file
+        os.remove(inventory_path)
 
 # Function to set Kubernetes context
 def set_kubernetes_context(project, zone, cluster_name):
@@ -179,6 +204,11 @@ def main():
     install_dependency('kubectl', ['gcloud', 'components', 'install', 'kubectl'])
     install_dependency('terraform', ['snap', 'install', 'terraform', '--classic'])
     run_command(['pip3', 'install', 'kubernetes'], "Error installing Kubernetes library")
+    run_command(['pip3', 'install', 'PyYAML'], "Error installing PyYAML library")
+
+    # Create or configure cluster first
+    cluster_exists = check_cluster_exists(vars['cluster_name'])
+    create_or_configure_resource(cluster_exists, create_cluster, f"GKE cluster '{vars['cluster_name']}'")
 
     # Read variables
     vars = read_tfvars('terraform/variables.tfvars')
