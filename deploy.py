@@ -1,6 +1,7 @@
 import os
 import subprocess
 import json
+import logging
 import sys
 import tempfile
 import yaml
@@ -150,7 +151,17 @@ def create_disk():
         run_command(['terraform', 'apply', '-auto-approve', '-var-file=variables.tfvars', '-target=google_compute_disk.jenkins_disk'], "Error creating disk")
 
 # Function to create cluster
+logging.basicConfig(level=logging.DEBUG)
+
 def create_cluster(run_dir):
+    with change_directory(f"{run_dir}/terraform"):
+        logging.debug(f"Current working directory: {os.getcwd()}")
+        logging.debug(f"Contents of current directory: {os.listdir()}")
+        
+        # Log the content of variables.tfvars
+        with open('variables.tfvars', 'r') as f:
+            logging.debug(f"Contents of variables.tfvars:\n{f.read()}")
+
     with change_directory(f"{run_dir}/terraform"):
         # Initialize Terraform with a new state file
         run_command(['terraform', 'init'], "Error initializing Terraform")
