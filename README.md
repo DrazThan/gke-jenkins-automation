@@ -1,9 +1,12 @@
 Hey everyone :)
 
 This is a basic python based orchestration, here is what it does : 
+Copies relevant files from repo into timestamped dir, to seperate environment from source code.
+** Important - it will wipe the intialized terraform state file if a new cluster is set, for example if you want to run the same script twice (from different gcp projects for example)
 It will check for pre existing resources to handle exceptions,
 spin them up in the google cloud cli using terraform,
 then it will install ansible and configure the resources using it.
+All with extensive error handling and logging
 
 To deploy : 
 
