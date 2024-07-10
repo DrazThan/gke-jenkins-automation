@@ -60,8 +60,13 @@ def prepare_running_directory():
     # Create subdirectories and copy files
     for subdir in ['terraform', 'ansible']:
         os.makedirs(f"{run_dir}/{subdir}", exist_ok=True)
-        for file in os.listdir(subdir):
-            shutil.copy(f"{subdir}/{file}", f"{run_dir}/{subdir}/{file}")
+        for item in os.listdir(subdir):
+            s = os.path.join(subdir, item)
+            d = os.path.join(run_dir, subdir, item)
+            if os.path.isdir(s):
+                shutil.copytree(s, d, symlinks=False, ignore=shutil.ignore_patterns('.terraform', '*.tfstate*'))
+            else:
+                shutil.copy2(s, d)
     
     return run_dir
 
