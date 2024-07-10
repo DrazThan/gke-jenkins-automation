@@ -1,13 +1,16 @@
 import os
 import subprocess
 import json
-import logging
 import sys
 import tempfile
 import yaml
 import shutil
+import logging
 from datetime import datetime
 from contextlib import contextmanager
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
 
 # Context manager for changing directories safely
 @contextmanager
@@ -23,10 +26,11 @@ def change_directory(path):
 def run_command(command, error_message, env=None):
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=True, env=env)
+        logging.debug(f"Command output: {result.stdout}")
         return result.stdout
     except subprocess.CalledProcessError as e:
-        print(f"{error_message}: {e}")
-        print(f"Error output: {e.stderr}")
+        logging.error(f"{error_message}: {e}")
+        logging.error(f"Error output: {e.stderr}")
         return None
 
 # Function to parse JSON output safely
@@ -34,7 +38,7 @@ def parse_json(json_string, error_message):
     try:
         return json.loads(json_string)
     except json.JSONDecodeError:
-        print(f"{error_message}. This might indicate no resources exist.")
+        logging.error(f"{error_message}. This might indicate no resources exist.")
         return None
 
 # Function to read Terraform variables
@@ -47,9 +51,10 @@ def read_tfvars(filepath):
                     name, value = line.split('=', 1)
                     vars[name.strip()] = value.strip().strip('"')
     except IOError as e:
-        print(f"Error reading tfvars file: {e}")
+        logging.error(f"Error reading tfvars file: {e}")
         sys.exit(1)
     return vars
+
 # Function to create repo into working directory
 def prepare_running_directory():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -130,7 +135,7 @@ def check_pvc_exists(project, zone, cluster_name, namespace, pvc_name):
 # Function to install dependencies
 def install_dependency(dependency, install_command):
     if run_command(['which', dependency], f"Checking {dependency} installation") is None:
-        print(f"{dependency} is not installed. Installing {dependency}...")
+        logging.info(f"{dependency} is not installed. Installing {dependency}...")
         if run_command(install_command, f"Error during {dependency} installation") is None:
             sys.exit(1)
         if dependency == 'ansible-playbook':
@@ -139,10 +144,10 @@ def install_dependency(dependency, install_command):
 # Function to create or configure a resource
 def create_or_configure_resource(exists, create_func, resource_name):
     if not exists:
-        print(f"Creating {resource_name}...")
+        logging.info(f"Creating {resource_name}...")
         create_func()
     else:
-        print(f"{resource_name} already exists. Skipping creation.")
+        logging.info(f"{resource_name} already exists. Skipping creation.")
 
 # Function to create disk
 def create_disk():
@@ -151,9 +156,7 @@ def create_disk():
         run_command(['terraform', 'apply', '-auto-approve', '-var-file=variables.tfvars', '-target=google_compute_disk.jenkins_disk'], "Error creating disk")
 
 # Function to create cluster
-logging.basicConfig(level=logging.DEBUG)
-
-def create_cluster(run_dir):
+def create_cluster(run_dir, vars):
     with change_directory(f"{run_dir}/terraform"):
         logging.debug(f"Current working directory: {os.getcwd()}")
         logging.debug(f"Contents of current directory: {os.listdir()}")
@@ -162,25 +165,41 @@ def create_cluster(run_dir):
         with open('variables.tfvars', 'r') as f:
             logging.debug(f"Contents of variables.tfvars:\n{f.read()}")
 
-    with change_directory(f"{run_dir}/terraform"):
+        # Check if the cluster already exists
+        cluster_check = run_command(['gcloud', 'container', 'clusters', 'describe', vars['cluster_name'], 
+                                     f"--zone={vars['zone']}", f"--project={vars['project']}", 
+                                     '--format=json'], "Error checking cluster existence")
+        
+        if cluster_check:
+            # Cluster exists, disable deletion protection
+            cluster_info = json.loads(cluster_check)
+            if cluster_info.get('deletionProtection', False):
+                logging.info("Disabling deletion protection on existing cluster")
+                run_command(['gcloud', 'container', 'clusters', 'update', vars['cluster_name'],
+                             f"--zone={vars['zone']}", f"--project={vars['project']}",
+                             '--no-enable-deletion-protection'], "Error disabling deletion protection")
+
         # Initialize Terraform with a new state file
-        run_command(['terraform', 'init'], "Error initializing Terraform")
+        init_result = run_command(['terraform', 'init'], "Error initializing Terraform")
+        logging.debug(f"Terraform init result: {init_result}")
         
         # Create/update the cluster with a new state file and ignore existing state
-        result = run_command([
+        apply_command = [
             'terraform', 'apply',
             '-auto-approve',
             '-var-file=variables.tfvars',
             '-state=terraform.tfstate',
             '-refresh=false',  # Ignore existing state
             '-target=google_container_cluster.primary'
-        ], "Error creating/updating cluster")
+        ]
+        logging.debug(f"Running Terraform apply command: {' '.join(apply_command)}")
+        result = run_command(apply_command, "Error creating/updating cluster")
+        logging.debug(f"Terraform apply result: {result}")
     return result
 
 # Function to create PVC
 def create_pvc(run_dir):
     run_kubectl_command(['apply', '-f', f'{run_dir}/ansible/jenkins_pvc.yaml'], "Error creating PVC")
-
 
 # Function to create role binding
 def create_role_binding(run_dir):
@@ -245,7 +264,7 @@ def verify_kubernetes_context(expected_project, expected_zone, expected_cluster)
         current_context = result.strip()
         expected_context = f"gke_{expected_project}_{expected_zone}_{expected_cluster}"
         if current_context != expected_context:
-            print(f"Warning: Current Kubernetes context '{current_context}' does not match expected context '{expected_context}'")
+            logging.warning(f"Current Kubernetes context '{current_context}' does not match expected context '{expected_context}'")
             return False
     return True
 
@@ -257,14 +276,12 @@ def main():
     kube_config = f"{run_dir}/kube_config"
     os.environ['KUBECONFIG'] = kube_config
 
-
     # Check and install dependencies
     install_dependency('ansible-playbook', ['pip3', 'install', 'ansible'])
     install_dependency('kubectl', ['gcloud', 'components', 'install', 'kubectl'])
     install_dependency('terraform', ['snap', 'install', 'terraform', '--classic'])
     run_command(['pip3', 'install', 'kubernetes'], "Error installing Kubernetes library")
     run_command(['pip3', 'install', 'PyYAML'], "Error installing PyYAML library")
-
 
     # Read variables
     vars = read_tfvars(f"{run_dir}/terraform/variables.tfvars")
@@ -274,21 +291,21 @@ def main():
     # Create or configure cluster
     cluster_exists = check_cluster_exists(vars['cluster_name'])
     if not cluster_exists:
-        print(f"Creating GKE cluster '{vars['cluster_name']}'...")
-        if create_cluster(run_dir) is None:
-            print("Failed to create cluster. Exiting.")
+        logging.info(f"Creating GKE cluster '{vars['cluster_name']}'...")
+        if create_cluster(run_dir, vars) is None:
+            logging.error("Failed to create cluster. Exiting.")
             sys.exit(1)
     else:
-        print(f"GKE cluster '{vars['cluster_name']}' already exists.")
+        logging.info(f"GKE cluster '{vars['cluster_name']}' already exists.")
 
     # Set Kubernetes context
     if set_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']) is None:
-        print("Failed to set Kubernetes context. Exiting.")
+        logging.error("Failed to set Kubernetes context. Exiting.")
         sys.exit(1)
 
     # Verify Kubernetes context
     if not verify_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']):
-        print("Kubernetes context mismatch. Exiting.")
+        logging.error("Kubernetes context mismatch. Exiting.")
         sys.exit(1)
 
     # Check resource existence
@@ -296,20 +313,20 @@ def main():
     pvc_exists = check_pvc_exists(vars['project'], vars['zone'], vars['cluster_name'], 'jenkins', 'jenkins-pvc')
 
     # Create or configure resources
-    create_or_configure_resource(disk_exists, lambda: create_disk(run_dir), "Disk 'jenkins-disk'")
+    create_or_configure_resource(disk_exists, lambda: create_disk(), "Disk 'jenkins-disk'")
     create_or_configure_resource(pvc_exists, lambda: create_pvc(run_dir), "PVC 'jenkins-pvc'")
 
-    print("Creating ClusterRoleBinding for Jenkins...")
+    logging.info("Creating ClusterRoleBinding for Jenkins...")
     if create_role_binding(run_dir) is None:
-        print("Failed to create ClusterRoleBinding. Exiting.")
+        logging.error("Failed to create ClusterRoleBinding. Exiting.")
         sys.exit(1)
 
-    print("Deploying Jenkins...")
+    logging.info("Deploying Jenkins...")
     if run_ansible(vars, run_dir) is None:
-        print("Failed to deploy Jenkins. Exiting.")
+        logging.error("Failed to deploy Jenkins. Exiting.")
         sys.exit(1)
 
-    print("Deployment completed successfully.")
+    logging.info("Deployment completed successfully.")
     cleanup_old_runs()
 
 def cleanup_old_runs(max_runs=5):
