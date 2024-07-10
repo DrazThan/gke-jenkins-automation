@@ -237,24 +237,33 @@ def run_ansible(vars, run_dir):
 # Function to set Kubernetes context
 def set_kubernetes_context(project, zone, cluster_name):
     global kube_config
+    # First, get the credentials without specifying the kubeconfig
     command = [
         'gcloud', 'container', 'clusters', 'get-credentials',
         cluster_name,
         f'--zone={zone}',
-        f'--project={project}',
-        f'--kubeconfig={kube_config}'
+        f'--project={project}'
     ]
-    result = run_command(command, "Error setting Kubernetes context")
-    logging.debug(f"Set Kubernetes context result: {result}")
+    result = run_command(command, "Error getting cluster credentials")
     
-    # Explicitly set the current context
-    if result:
-        context_name = f"gke_{project}_{zone}_{cluster_name}"
-        set_context_command = ['kubectl', 'config', 'use-context', context_name, f'--kubeconfig={kube_config}']
-        set_context_result = run_command(set_context_command, "Error setting current context")
-        logging.debug(f"Set current context result: {set_context_result}")
+    if result is not None:
+        # Now, use kubectl to view the config and save it to our custom location
+        view_config_command = ['kubectl', 'config', 'view', '--raw']
+        config_content = run_command(view_config_command, "Error viewing kubectl config")
+        
+        if config_content:
+            with open(kube_config, 'w') as f:
+                f.write(config_content)
+            
+            # Set the current context
+            context_name = f"gke_{project}_{zone}_{cluster_name}"
+            set_context_command = ['kubectl', 'config', 'use-context', context_name, f'--kubeconfig={kube_config}']
+            set_context_result = run_command(set_context_command, "Error setting current context")
+            logging.debug(f"Set current context result: {set_context_result}")
+            
+            return True
     
-    return result
+    return False
 
 # verify kubectl connectivity
 def verify_kubectl_connectivity():
@@ -324,7 +333,7 @@ def main():
         logging.info(f"GKE cluster '{vars['cluster_name']}' already exists.")
 
     logging.info("Setting Kubernetes context...")
-    if set_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']) is None:
+    if not set_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']):
         logging.error("Failed to set Kubernetes context. Exiting.")
         sys.exit(1)
 
