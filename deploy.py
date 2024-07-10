@@ -319,7 +319,8 @@ def main():
 
     # Read variables
     vars = read_tfvars(f"{run_dir}/terraform/variables.tfvars")
-    # setting cluster:
+    
+    # Set GCP project
     set_gcp_project(vars['project'])
 
     # Create or configure cluster
@@ -332,39 +333,18 @@ def main():
     else:
         logging.info(f"GKE cluster '{vars['cluster_name']}' already exists.")
 
-    logging.info("Setting Kubernetes context...")
+    # Set Kubernetes context
     if not set_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']):
         logging.error("Failed to set Kubernetes context. Exiting.")
         sys.exit(1)
 
-    if set_current_context(vars['project'], vars['zone'], vars['cluster_name']) is None:
-        logging.error("Failed to set current context. Exiting.")
-        sys.exit(1)
-
-    logging.info("Verifying Kubernetes connectivity...")
+    # Verify Kubernetes connectivity
     if not verify_kubectl_connectivity():
         logging.error("Failed to connect to the Kubernetes cluster. Exiting.")
         sys.exit(1)
 
-    logging.info("Verifying Kubernetes context...")
-    if not verify_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']):
-        logging.error("Kubernetes context mismatch. Exiting.")
-        sys.exit(1)
-
-    # Check resource existence
-    disk_exists = check_disk_exists()
-    pvc_exists = check_pvc_exists(vars['project'], vars['zone'], vars['cluster_name'], 'jenkins', 'jenkins-pvc')
-
-    # Create or configure resources
-    create_or_configure_resource(disk_exists, lambda: create_disk(), "Disk 'jenkins-disk'")
-    create_or_configure_resource(pvc_exists, lambda: create_pvc(run_dir), "PVC 'jenkins-pvc'")
-
-    logging.info("Creating ClusterRoleBinding for Jenkins...")
-    if create_role_binding(run_dir) is None:
-        logging.error("Failed to create ClusterRoleBinding. Exiting.")
-        sys.exit(1)
-
-    logging.info("Deploying Jenkins...")
+    # Run Ansible playbook to deploy Jenkins
+    logging.info("Deploying Jenkins using Ansible...")
     if run_ansible(vars, run_dir) is None:
         logging.error("Failed to deploy Jenkins. Exiting.")
         sys.exit(1)
