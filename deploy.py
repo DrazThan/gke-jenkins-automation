@@ -246,11 +246,21 @@ def set_kubernetes_context(project, zone, cluster_name):
     ]
     result = run_command(command, "Error setting Kubernetes context")
     logging.debug(f"Set Kubernetes context result: {result}")
+    
+    # Explicitly set the current context
+    if result:
+        context_name = f"gke_{project}_{zone}_{cluster_name}"
+        set_context_command = ['kubectl', 'config', 'use-context', context_name, f'--kubeconfig={kube_config}']
+        set_context_result = run_command(set_context_command, "Error setting current context")
+        logging.debug(f"Set current context result: {set_context_result}")
+    
     return result
 
 # verify kubectl connectivity
 def verify_kubectl_connectivity():
-    result = run_kubectl_command(['cluster-info'], "Error checking cluster info")
+    global kube_config
+    command = ['kubectl', f'--kubeconfig={kube_config}', 'cluster-info']
+    result = run_command(command, "Error checking cluster info")
     if result is None:
         logging.error("Failed to connect to the Kubernetes cluster.")
         return False
@@ -322,6 +332,7 @@ def main():
         logging.error("Failed to set current context. Exiting.")
         sys.exit(1)
 
+    logging.info("Verifying Kubernetes connectivity...")
     if not verify_kubectl_connectivity():
         logging.error("Failed to connect to the Kubernetes cluster. Exiting.")
         sys.exit(1)
