@@ -12,6 +12,9 @@ from contextlib import contextmanager
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 
+# Global variable for Kubernetes config
+kube_config = None
+
 # Context manager for changing directories safely
 @contextmanager
 def change_directory(path):
@@ -113,21 +116,21 @@ def create_temp_kube_config():
     os.close(fd)
     return path
 
-# Global variable for Kubernetes config
-kube_config = create_temp_kube_config()
-
 # Function to run kubectl commands
 def run_kubectl_command(command, error_message):
+    global kube_config
+    kubectl_path = "/usr/bin/kubectl"  # Use the full path
     full_command = [
-        'kubectl',
+        kubectl_path,
         f'--kubeconfig={kube_config}',
     ] + command
     return run_command(full_command, error_message)
 
 # Function to check if PVC exists
 def check_pvc_exists(project, zone, cluster_name, namespace, pvc_name):
+    global kube_config
     # Get cluster credentials
-    run_command(['gcloud', 'container', 'clusters', 'get-credentials', cluster_name, '--zone', zone, '--project', project], "Error getting cluster credentials")
+    run_command(['gcloud', 'container', 'clusters', 'get-credentials', cluster_name, '--zone', zone, '--project', project, f'--kubeconfig={kube_config}'], "Error getting cluster credentials")
     
     output = run_kubectl_command(['get', 'pvc', pvc_name, '-n', namespace, '-o', 'json'], "Error checking PVC existence")
     return output is not None
@@ -233,14 +236,37 @@ def run_ansible(vars, run_dir):
 
 # Function to set Kubernetes context
 def set_kubernetes_context(project, zone, cluster_name):
+    global kube_config
     command = [
         'gcloud', 'container', 'clusters', 'get-credentials',
         cluster_name,
         f'--zone={zone}',
-        f'--project={project}'
+        f'--project={project}',
+        f'--kubeconfig={kube_config}'
     ]
     result = run_command(command, "Error setting Kubernetes context")
     logging.debug(f"Set Kubernetes context result: {result}")
+    return result
+
+# verify kubectl connectivity
+def verify_kubectl_connectivity():
+    result = run_kubectl_command(['cluster-info'], "Error checking cluster info")
+    if result is None:
+        logging.error("Failed to connect to the Kubernetes cluster.")
+        return False
+    logging.info("Successfully connected to the Kubernetes cluster.")
+    return True
+
+# set current context for kubernetes
+def set_current_context(project, zone, cluster_name):
+    global kube_config
+    context_name = f"gke_{project}_{zone}_{cluster_name}"
+    command = [
+        'kubectl', 'config', 'use-context', context_name,
+        f'--kubeconfig={kube_config}'
+    ]
+    result = run_command(command, "Error setting current context")
+    logging.debug(f"Set current context result: {result}")
     return result
 
 # Function to verify Kubernetes context
@@ -258,6 +284,7 @@ def verify_kubernetes_context(expected_project, expected_zone, expected_cluster)
 
 # Main function
 def main():
+    global kube_config
     # Prepare running directory
     run_dir = prepare_running_directory()
     # Set up environment to use temporary Kubernetes config
@@ -289,6 +316,14 @@ def main():
     logging.info("Setting Kubernetes context...")
     if set_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']) is None:
         logging.error("Failed to set Kubernetes context. Exiting.")
+        sys.exit(1)
+
+    if set_current_context(vars['project'], vars['zone'], vars['cluster_name']) is None:
+        logging.error("Failed to set current context. Exiting.")
+        sys.exit(1)
+
+    if not verify_kubectl_connectivity():
+        logging.error("Failed to connect to the Kubernetes cluster. Exiting.")
         sys.exit(1)
 
     logging.info("Verifying Kubernetes context...")
