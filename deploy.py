@@ -56,6 +56,11 @@ def prepare_running_directory():
     
     # Create the main running directory
     os.makedirs(run_dir, exist_ok=True)
+
+    # Clear Terraform cache
+    terraform_cache = os.path.expanduser('~/.terraform.d/plugin-cache')
+    if os.path.exists(terraform_cache):
+        shutil.rmtree(terraform_cache)
     
     # Create subdirectories and copy files
     for subdir in ['terraform', 'ansible']:
@@ -69,6 +74,10 @@ def prepare_running_directory():
                 shutil.copy2(s, d)
     
     return run_dir
+
+# Set the google cloud project ID
+def set_gcp_project(project_id):
+    run_command(['gcloud', 'config', 'set', 'project', project_id], "Error setting GCP project")
 
 # Function to check if a resource exists
 def check_resource_exists(command, resource_name):
@@ -143,13 +152,18 @@ def create_disk():
 # Function to create cluster
 def create_cluster(run_dir):
     with change_directory(f"{run_dir}/terraform"):
+        # Initialize Terraform with a new state file
         run_command(['terraform', 'init'], "Error initializing Terraform")
+        
+        # Create/update the cluster with a new state file and ignore existing state
         result = run_command([
             'terraform', 'apply',
             '-auto-approve',
             '-var-file=variables.tfvars',
+            '-state=terraform.tfstate',
+            '-refresh=false',  # Ignore existing state
             '-target=google_container_cluster.primary'
-        ], "Error creating cluster")
+        ], "Error creating/updating cluster")
     return result
 
 # Function to create PVC
@@ -243,8 +257,10 @@ def main():
 
     # Read variables
     vars = read_tfvars(f"{run_dir}/terraform/variables.tfvars")
+    # setting cluster:
+    set_gcp_project(vars['project'])
 
-        # Create or configure cluster
+    # Create or configure cluster
     cluster_exists = check_cluster_exists(vars['cluster_name'])
     if not cluster_exists:
         print(f"Creating GKE cluster '{vars['cluster_name']}'...")
