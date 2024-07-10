@@ -161,35 +161,25 @@ def create_cluster(run_dir, vars):
         logging.debug(f"Current working directory: {os.getcwd()}")
         logging.debug(f"Contents of current directory: {os.listdir()}")
         
-        # Log the content of variables.tfvars
         with open('variables.tfvars', 'r') as f:
             logging.debug(f"Contents of variables.tfvars:\n{f.read()}")
 
-        # Check if the cluster already exists
-        cluster_check = run_command(['gcloud', 'container', 'clusters', 'describe', vars['cluster_name'], 
-                                     f"--zone={vars['zone']}", f"--project={vars['project']}", 
-                                     '--format=json'], "Error checking cluster existence")
-        
-        if cluster_check:
-            # Cluster exists, disable deletion protection
-            cluster_info = json.loads(cluster_check)
-            if cluster_info.get('deletionProtection', False):
-                logging.info("Disabling deletion protection on existing cluster")
-                run_command(['gcloud', 'container', 'clusters', 'update', vars['cluster_name'],
-                             f"--zone={vars['zone']}", f"--project={vars['project']}",
-                             '--no-enable-deletion-protection'], "Error disabling deletion protection")
-
-        # Initialize Terraform with a new state file
+        # Initialize Terraform
         init_result = run_command(['terraform', 'init'], "Error initializing Terraform")
         logging.debug(f"Terraform init result: {init_result}")
         
-        # Create/update the cluster with a new state file and ignore existing state
+        # Check Terraform state
+        show_result = run_command(['terraform', 'show'], "Error showing Terraform state")
+        if 'google_container_cluster' in show_result:
+            logging.info("Existing cluster found in Terraform state. Removing it.")
+            run_command(['terraform', 'state', 'rm', 'google_container_cluster.primary'], "Error removing cluster from Terraform state")
+        
+        # Apply Terraform changes
         apply_command = [
             'terraform', 'apply',
             '-auto-approve',
             '-var-file=variables.tfvars',
             '-state=terraform.tfstate',
-            '-refresh=false',  # Ignore existing state
             '-target=google_container_cluster.primary'
         ]
         logging.debug(f"Running Terraform apply command: {' '.join(apply_command)}")
