@@ -4,6 +4,8 @@ import json
 import sys
 import tempfile
 import yaml
+import shutil
+from datetime import datetime
 from contextlib import contextmanager
 
 # Context manager for changing directories safely
@@ -47,6 +49,21 @@ def read_tfvars(filepath):
         print(f"Error reading tfvars file: {e}")
         sys.exit(1)
     return vars
+# Function to create repo into working directory
+def prepare_running_directory():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = f"/tmp/deployment_{timestamp}"
+    
+    # Create the main running directory
+    os.makedirs(run_dir, exist_ok=True)
+    
+    # Create subdirectories and copy files
+    for subdir in ['terraform', 'ansible']:
+        os.makedirs(f"{run_dir}/{subdir}", exist_ok=True)
+        for file in os.listdir(subdir):
+            shutil.copy(f"{subdir}/{file}", f"{run_dir}/{subdir}/{file}")
+    
+    return run_dir
 
 # Function to check if a resource exists
 def check_resource_exists(command, resource_name):
@@ -119,17 +136,25 @@ def create_disk():
         run_command(['terraform', 'apply', '-auto-approve', '-var-file=variables.tfvars', '-target=google_compute_disk.jenkins_disk'], "Error creating disk")
 
 # Function to create cluster
-def create_cluster():
-    with change_directory('terraform'):
-        run_command(['terraform', 'apply', '-auto-approve', '-var-file=variables.tfvars', '-target=google_container_cluster.primary'], "Error creating cluster")
+def create_cluster(run_dir):
+    with change_directory(f"{run_dir}/terraform"):
+        run_command(['terraform', 'init'], "Error initializing Terraform")
+        result = run_command([
+            'terraform', 'apply',
+            '-auto-approve',
+            '-var-file=variables.tfvars',
+            '-target=google_container_cluster.primary'
+        ], "Error creating cluster")
+    return result
 
 # Function to create PVC
-def create_pvc():
-    run_kubectl_command(['apply', '-f', 'ansible/jenkins_pvc.yaml'], "Error creating PVC")
+def create_pvc(run_dir):
+    run_kubectl_command(['apply', '-f', f'{run_dir}/ansible/jenkins_pvc.yaml'], "Error creating PVC")
+
 
 # Function to create role binding
-def create_role_binding():
-    run_kubectl_command(['apply', '-f', 'ansible/jenkins-role-binding.yaml'], "Error creating role binding")
+def create_role_binding(run_dir):
+    run_kubectl_command(['apply', '-f', f'{run_dir}/ansible/jenkins-role-binding.yaml'], "Error creating role binding")
 
 def create_temp_ansible_inventory(project, zone):
     inventory = {
@@ -150,7 +175,7 @@ def create_temp_ansible_inventory(project, zone):
     return path
 
 # Function to run Ansible playbook
-def run_ansible(vars):
+def run_ansible(vars, run_dir):
     env_vars = os.environ.copy()
     
     # Create temporary Ansible inventory
@@ -160,7 +185,7 @@ def run_ansible(vars):
         run_command([
             'ansible-playbook',
             '-i', inventory_path,
-            'ansible/deploy_jenkins.yml',
+            f'{run_dir}/ansible/deploy_jenkins.yml',
             '--extra-vars', f"project={vars['project']} zone={vars['zone']} cluster_name={vars['cluster_name']}"
         ], "Error running Ansible playbook", env=env_vars)
     finally:
@@ -196,11 +221,12 @@ def verify_kubernetes_context(expected_project, expected_zone, expected_cluster)
 
 # Main function
 def main():
-    # Clear existing Kubernetes config
-    clear_kubernetes_config()
-
+    # Prepare running directory
+    run_dir = prepare_running_directory()
     # Set up environment to use temporary Kubernetes config
+    kube_config = f"{run_dir}/kube_config"
     os.environ['KUBECONFIG'] = kube_config
+
 
     # Check and install dependencies
     install_dependency('ansible-playbook', ['pip3', 'install', 'ansible'])
@@ -211,13 +237,13 @@ def main():
 
 
     # Read variables
-    vars = read_tfvars('terraform/variables.tfvars')
+    vars = read_tfvars(f"{run_dir}/terraform/variables.tfvars")
 
-    # Create or configure cluster first
+        # Create or configure cluster
     cluster_exists = check_cluster_exists(vars['cluster_name'])
     if not cluster_exists:
         print(f"Creating GKE cluster '{vars['cluster_name']}'...")
-        if create_cluster() is None:
+        if create_cluster(run_dir) is None:
             print("Failed to create cluster. Exiting.")
             sys.exit(1)
     else:
@@ -238,20 +264,26 @@ def main():
     pvc_exists = check_pvc_exists(vars['project'], vars['zone'], vars['cluster_name'], 'jenkins', 'jenkins-pvc')
 
     # Create or configure resources
-    create_or_configure_resource(disk_exists, create_disk, "Disk 'jenkins-disk'")
-    create_or_configure_resource(pvc_exists, create_pvc, "PVC 'jenkins-pvc'")
+    create_or_configure_resource(disk_exists, lambda: create_disk(run_dir), "Disk 'jenkins-disk'")
+    create_or_configure_resource(pvc_exists, lambda: create_pvc(run_dir), "PVC 'jenkins-pvc'")
 
     print("Creating ClusterRoleBinding for Jenkins...")
-    if create_role_binding() is None:
+    if create_role_binding(run_dir) is None:
         print("Failed to create ClusterRoleBinding. Exiting.")
         sys.exit(1)
 
     print("Deploying Jenkins...")
-    if run_ansible(vars) is None:
+    if run_ansible(vars, run_dir) is None:
         print("Failed to deploy Jenkins. Exiting.")
         sys.exit(1)
 
     print("Deployment completed successfully.")
+    cleanup_old_runs()
+
+def cleanup_old_runs(max_runs=5):
+    runs = sorted([d for d in os.listdir('/tmp') if d.startswith('deployment_')], reverse=True)
+    for old_run in runs[max_runs:]:
+        shutil.rmtree(f"/tmp/{old_run}")
 
 if __name__ == "__main__":
     main()
