@@ -213,19 +213,15 @@ def main():
     # Read variables
     vars = read_tfvars('terraform/variables.tfvars')
 
-   # Create or configure cluster first
-    def main():
-    # ... (previous code remains the same)
-
     # Create or configure cluster first
-        cluster_exists = check_cluster_exists(vars['cluster_name'])
-        if not cluster_exists:
-            print(f"Creating GKE cluster '{vars['cluster_name']}'...")
-            if create_cluster() is None:
-                print("Failed to create cluster. Exiting.")
-                sys.exit(1)
-        else:
-            print(f"GKE cluster '{vars['cluster_name']}' already exists.")
+    cluster_exists = check_cluster_exists(vars['cluster_name'])
+    if not cluster_exists:
+        print(f"Creating GKE cluster '{vars['cluster_name']}'...")
+        if create_cluster() is None:
+            print("Failed to create cluster. Exiting.")
+            sys.exit(1)
+    else:
+        print(f"GKE cluster '{vars['cluster_name']}' already exists.")
 
     # Set Kubernetes context
     if set_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']) is None:
