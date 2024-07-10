@@ -224,12 +224,13 @@ def run_ansible(vars, run_dir):
     inventory_path = create_temp_ansible_inventory(vars['project'], vars['zone'])
     
     try:
-        run_command([
+        result = run_command([
             'ansible-playbook',
             '-i', inventory_path,
             f'{run_dir}/ansible/deploy_jenkins.yml',
             '--extra-vars', f"project={vars['project']} zone={vars['zone']} cluster_name={vars['cluster_name']}"
         ], "Error running Ansible playbook", env=env_vars)
+        return result
     finally:
         # Clean up the temporary inventory file
         os.remove(inventory_path)
