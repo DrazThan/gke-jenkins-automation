@@ -170,7 +170,7 @@ def create_cluster(run_dir, vars):
         
         # Check Terraform state
         show_result = run_command(['terraform', 'show'], "Error showing Terraform state")
-        if 'google_container_cluster' in show_result:
+        if show_result and 'google_container_cluster' in show_result:
             logging.info("Existing cluster found in Terraform state. Removing it.")
             run_command(['terraform', 'state', 'rm', 'google_container_cluster.primary'], "Error removing cluster from Terraform state")
         
@@ -239,20 +239,18 @@ def set_kubernetes_context(project, zone, cluster_name):
         f'--zone={zone}',
         f'--project={project}'
     ]
-    run_command(command, "Error setting Kubernetes context")
-
-# Function to clear Kubernetes config
-def clear_kubernetes_config():
-    config_file = os.path.expanduser('~/.kube/config')
-    if os.path.exists(config_file):
-        os.rename(config_file, f"{config_file}.bak")
+    result = run_command(command, "Error setting Kubernetes context")
+    logging.debug(f"Set Kubernetes context result: {result}")
+    return result
 
 # Function to verify Kubernetes context
 def verify_kubernetes_context(expected_project, expected_zone, expected_cluster):
     result = run_kubectl_command(['config', 'current-context'], "Error getting current context")
+    logging.debug(f"Current Kubernetes context: {result}")
     if result:
         current_context = result.strip()
         expected_context = f"gke_{expected_project}_{expected_zone}_{expected_cluster}"
+        logging.debug(f"Expected context: {expected_context}")
         if current_context != expected_context:
             logging.warning(f"Current Kubernetes context '{current_context}' does not match expected context '{expected_context}'")
             return False
@@ -288,12 +286,12 @@ def main():
     else:
         logging.info(f"GKE cluster '{vars['cluster_name']}' already exists.")
 
-    # Set Kubernetes context
+    logging.info("Setting Kubernetes context...")
     if set_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']) is None:
         logging.error("Failed to set Kubernetes context. Exiting.")
         sys.exit(1)
 
-    # Verify Kubernetes context
+    logging.info("Verifying Kubernetes context...")
     if not verify_kubernetes_context(vars['project'], vars['zone'], vars['cluster_name']):
         logging.error("Kubernetes context mismatch. Exiting.")
         sys.exit(1)
