@@ -139,8 +139,12 @@ def check_pvc_exists(project, zone, cluster_name, namespace, pvc_name):
 def install_dependency(dependency, install_command):
     if run_command(['which', dependency], f"Checking {dependency} installation") is None:
         logging.info(f"{dependency} is not installed. Installing {dependency}...")
-        if run_command(install_command, f"Error during {dependency} installation") is None:
-            sys.exit(1)
+        if dependency == 'ansible-playbook':
+            run_command(['pip3', 'install', 'ansible'], f"Error during {dependency} installation")
+            run_command(['ansible-galaxy', 'collection', 'install', 'kubernetes.core'], "Error installing Kubernetes collection for Ansible")
+        else:
+            if run_command(install_command, f"Error during {dependency} installation") is None:
+                sys.exit(1)
         if dependency == 'ansible-playbook':
             os.environ["PATH"] += os.pathsep + os.path.expanduser("~/.local/bin")
 
@@ -217,19 +221,20 @@ def create_temp_ansible_inventory(project, zone):
     return path
 
 # Function to run Ansible playbook
-def run_ansible(vars, run_dir):
+def run_ansible(vars, run_dir, method='kubectl'):
     env_vars = os.environ.copy()
     
     # Create temporary Ansible inventory
     inventory_path = create_temp_ansible_inventory(vars['project'], vars['zone'])
     
     try:
+        playbook = 'deploy_jenkins.yml' if method == 'kubectl' else 'deploy_jenkins_helm.yml'
         result = run_command([
             'ansible-playbook',
             '-i', inventory_path,
-            f'{run_dir}/ansible/deploy_jenkins.yml',
+            f'{run_dir}/ansible/{playbook}',
             '--extra-vars', f"project={vars['project']} zone={vars['zone']} cluster_name={vars['cluster_name']}"
-        ], "Error running Ansible playbook", env=env_vars)
+        ], f"Error running Ansible playbook for {method} deployment", env=env_vars)
         return result
     finally:
         # Clean up the temporary inventory file
@@ -302,8 +307,18 @@ def verify_kubernetes_context(expected_project, expected_zone, expected_cluster)
             return False
     return True
 
+# Function to caall the argument parser (to choose between helm and kubectl)
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Deploy Jenkins to GKE")
+    parser.add_argument('--method', choices=['kubectl', 'helm'], default='kubectl',
+                        help='Deployment method: kubectl (default) or helm')
+    return parser.parse_args()
+
+
 # Main function
 def main():
+    args = parse_arguments()
+
     global kube_config
     # Prepare running directory
     run_dir = prepare_running_directory()
@@ -315,6 +330,7 @@ def main():
     install_dependency('ansible-playbook', ['pip3', 'install', 'ansible'])
     install_dependency('kubectl', ['gcloud', 'components', 'install', 'kubectl'])
     install_dependency('terraform', ['snap', 'install', 'terraform', '--classic'])
+    install_dependency('helm', ['snap', 'install', 'helm', '--classic'])
     run_command(['pip3', 'install', 'kubernetes'], "Error installing Kubernetes library")
     run_command(['pip3', 'install', 'PyYAML'], "Error installing PyYAML library")
 
@@ -344,10 +360,10 @@ def main():
         logging.error("Failed to connect to the Kubernetes cluster. Exiting.")
         sys.exit(1)
 
-    # Run Ansible playbook to deploy Jenkins
-    logging.info("Deploying Jenkins using Ansible...")
-    if run_ansible(vars, run_dir) is None:
-        logging.error("Failed to deploy Jenkins. Exiting.")
+    # Run Ansible playbook to deploy Jenkins using the chosen method
+    logging.info(f"Deploying Jenkins using Ansible with {args.method}...")
+    if run_ansible(vars, run_dir, args.method) is None:
+        logging.error(f"Failed to deploy Jenkins with {args.method}. Exiting.")
         sys.exit(1)
 
     logging.info("Deployment completed successfully.")
@@ -357,6 +373,8 @@ def cleanup_old_runs(max_runs=5):
     runs = sorted([d for d in os.listdir('/tmp') if d.startswith('deployment_')], reverse=True)
     for old_run in runs[max_runs:]:
         shutil.rmtree(f"/tmp/{old_run}")
+
+
 
 if __name__ == "__main__":
     main()
