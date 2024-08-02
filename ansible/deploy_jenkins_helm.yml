@@ -9,6 +9,19 @@
         gcloud container clusters get-credentials {{ cluster_name }} --zone {{ zone }} --project {{ project }}
       environment:
         CLOUDSDK_CORE_PROJECT: "{{ project }}"
+    # Add debug tasks here, right after authentication
+    - name: Debug - Display variables
+      debug:
+        msg: "Project: {{ project }}, Zone: {{ zone }}, Cluster: {{ cluster_name }}"
+
+    - name: Debug - Check kubectl access
+      shell: kubectl get nodes
+      register: kubectl_result
+      ignore_errors: yes
+
+    - name: Display kubectl result
+      debug:
+        var: kubectl_result
 
     - name: Check Helm version
       shell: helm version
@@ -17,7 +30,7 @@
 
     - name: Display Helm version
       debug:
-      var: helm_version
+        var: helm_version
 
     - name: Add Jenkins Helm repo
       kubernetes.core.helm_repository:
