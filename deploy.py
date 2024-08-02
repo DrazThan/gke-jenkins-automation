@@ -236,14 +236,20 @@ def run_ansible(vars, run_dir, method='kubectl'):
     
     try:
         playbook = 'deploy_jenkins.yml' if method == 'kubectl' else 'deploy_jenkins_helm.yml'
-        result = run_command([
+        command = [
             'ansible-playbook',
             '-i', inventory_path,
             f'{run_dir}/ansible/{playbook}',
             '--extra-vars', f"project={vars['project']} zone={vars['zone']} cluster_name={vars['cluster_name']}",
             '-vvv'
-        ], f"Error running Ansible playbook for {method} deployment", env=env_vars)
-        return result
+        ]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            logging.error(f"Ansible playbook failed. Return code: {result.returncode}")
+            logging.error(f"Stdout: {result.stdout}")
+            logging.error(f"Stderr: {result.stderr}")
+            return None
+        return result.stdout
     finally:
         # Clean up the temporary inventory file
         os.remove(inventory_path)

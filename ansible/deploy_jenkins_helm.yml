@@ -1,6 +1,7 @@
 ---
 - name: Deploy Jenkins on GKE using Helm
   hosts: localhost
+  connection: local
   gather_facts: no
   tasks:
     - name: Authenticate with GKE
@@ -8,6 +9,15 @@
         gcloud container clusters get-credentials {{ cluster_name }} --zone {{ zone }} --project {{ project }}
       environment:
         CLOUDSDK_CORE_PROJECT: "{{ project }}"
+
+    - name: Check Helm version
+      shell: helm version
+      register: helm_version
+      ignore_errors: yes
+
+    - name: Display Helm version
+      debug:
+      var: helm_version
 
     - name: Add Jenkins Helm repo
       kubernetes.core.helm_repository:
