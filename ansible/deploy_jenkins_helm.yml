@@ -3,16 +3,18 @@
   hosts: localhost
   gather_facts: no
   tasks:
-- name: Authenticate with GKE
+    - name: Authenticate with GKE
       shell: |
         gcloud container clusters get-credentials {{ cluster_name }} --zone {{ zone }} --project {{ project }}
       environment:
         CLOUDSDK_CORE_PROJECT: "{{ project }}"
-- name: Add Jenkins Helm repo
+
+    - name: Add Jenkins Helm repo
       kubernetes.core.helm_repository:
         name: jenkins
         repo_url: "https://charts.jenkins.io"
-- name: Deploy Jenkins using Helm
+
+    - name: Deploy Jenkins using Helm
       kubernetes.core.helm:
         name: jenkins
         chart_ref: jenkins/jenkins
@@ -21,9 +23,39 @@
         values:
           controller:
             serviceType: LoadBalancer
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
           persistence:
             storageClass: "standard"
             size: 50Gi
           rbac:
             create: true
             clusterAdminRole: true
+          agent:
+            enabled: true
+            componentName: "jenkins-agent"
+            image: "jenkins/inbound-agent"
+            tag: "latest-alpine3.20-jdk21"  # Updated to the latest tag you found
+            workingDir: "/home/jenkins/agent"
+            containerCap: 10
+            podName: "default"
+            customJenkinsLabels: []
+            resources:
+              requests:
+                cpu: "512m"
+                memory: "512Mi"
+              limits:
+                cpu: "1"
+                memory: "1Gi"
+          additionalAgents:
+            maven:
+              podName: maven
+              customJenkinsLabels: maven
+              image: jenkins/inbound-agent
+              tag: "latest-alpine3.20-jdk21"  # Using the same latest image for Maven
+            python:
+              podName: python
+              customJenkinsLabels: python
+              image: jenkins/inbound-agent
+              tag: "latest-alpine3.20-jdk21"  # Using the same latest image for Python
