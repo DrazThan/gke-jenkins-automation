@@ -58,8 +58,9 @@
           agent:
             enabled: true
             componentName: "jenkins-agent"
-            image: "jenkins/inbound-agent"
-            tag: "latest-alpine3.20-jdk21"  # Updated to the latest tag you found
+            image:
+              repository: "jenkins/inbound-agent"
+              tag: "latest-alpine3.20-jdk21"  
             workingDir: "/home/jenkins/agent"
             containerCap: 10
             podName: "default"
@@ -75,10 +76,12 @@
             maven:
               podName: maven
               customJenkinsLabels: maven
-              image: jenkins/inbound-agent
+              image:
+              repository: jenkins/inbound-agent
               tag: "latest-alpine3.20-jdk21"  # Using the same latest image for Maven
             python:
               podName: python
               customJenkinsLabels: python
-              image: jenkins/inbound-agent
-              tag: "latest-alpine3.20-jdk21"  # Using the same latest image for Python
+              image:
+                repository: jenkins/inbound-agent
+                tag: "latest-alpine3.20-jdk21"  # Using the same latest image for Python
