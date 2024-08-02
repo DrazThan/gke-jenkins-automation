@@ -142,6 +142,7 @@ def install_dependency(dependency, install_command):
         logging.info(f"{dependency} is not installed. Installing {dependency}...")
         if dependency == 'ansible-playbook':
             run_command(['pip3', 'install', 'ansible'], f"Error during {dependency} installation")
+            run_command(['pip3', 'install', 'PyYAML'], "Error installing PyYAML library")
             run_command(['ansible-galaxy', 'collection', 'install', 'kubernetes.core'], "Error installing Kubernetes collection for Ansible")
         else:
             if run_command(install_command, f"Error during {dependency} installation") is None:
@@ -206,18 +207,19 @@ def create_role_binding(run_dir):
 def create_temp_ansible_inventory(project, zone):
     inventory = {
         'all': {
-            'hosts': ['localhost'],
-            'vars': {
-                'ansible_connection': 'local',
-                'gcp_project': project,
-                'gcp_zone': zone,
+            'hosts': {
+                'localhost': {
+                    'ansible_connection': 'local',
+                    'gcp_project': project,
+                    'gcp_zone': zone,
+                }
             }
         }
     }
     
     fd, path = tempfile.mkstemp(prefix='ansible_inventory_', suffix='.yml')
     with os.fdopen(fd, 'w') as f:
-        yaml.dump(inventory, f)
+        yaml.dump(inventory, f, default_flow_style=False)
     
     return path
 
@@ -228,13 +230,18 @@ def run_ansible(vars, run_dir, method='kubectl'):
     # Create temporary Ansible inventory
     inventory_path = create_temp_ansible_inventory(vars['project'], vars['zone'])
     
+    # Debug: Print inventory file contents
+    with open(inventory_path, 'r') as f:
+        logging.debug(f"Ansible inventory file contents:\n{f.read()}")
+    
     try:
         playbook = 'deploy_jenkins.yml' if method == 'kubectl' else 'deploy_jenkins_helm.yml'
         result = run_command([
             'ansible-playbook',
             '-i', inventory_path,
             f'{run_dir}/ansible/{playbook}',
-            '--extra-vars', f"project={vars['project']} zone={vars['zone']} cluster_name={vars['cluster_name']}"
+            '--extra-vars', f"project={vars['project']} zone={vars['zone']} cluster_name={vars['cluster_name']}",
+            '-vvv'
         ], f"Error running Ansible playbook for {method} deployment", env=env_vars)
         return result
     finally:
