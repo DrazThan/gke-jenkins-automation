@@ -138,17 +138,32 @@ def check_pvc_exists(project, zone, cluster_name, namespace, pvc_name):
 
 # Function to install dependencies
 def install_dependency(dependency, install_command):
-    if run_command(['which', dependency], f"Checking {dependency} installation") is None:
-        logging.info(f"{dependency} is not installed. Installing {dependency}...")
+    logging.info(f"Checking for {dependency}...")
+    which_result = run_command(['which', dependency], f"Checking {dependency} installation")
+    
+    if which_result is None:
+        logging.info(f"{dependency} is not found. Installing {dependency}...")
         if dependency == 'ansible-playbook':
             run_command(['pip3', 'install', 'ansible'], f"Error during {dependency} installation")
             run_command(['pip3', 'install', 'PyYAML'], "Error installing PyYAML library")
+            
+            # Update PATH
+            os.environ["PATH"] += os.pathsep + os.path.expanduser("~/.local/bin")
+            logging.info(f"Updated PATH: {os.environ['PATH']}")
+            
+            # Check if ansible-galaxy is now in PATH
+            ansible_galaxy_path = run_command(['which', 'ansible-galaxy'], "Checking ansible-galaxy installation")
+            if ansible_galaxy_path:
+                logging.info(f"ansible-galaxy found at: {ansible_galaxy_path}")
+            else:
+                logging.error("ansible-galaxy not found in PATH after installation")
+            
             run_command(['ansible-galaxy', 'collection', 'install', 'kubernetes.core'], "Error installing Kubernetes collection for Ansible")
         else:
             if run_command(install_command, f"Error during {dependency} installation") is None:
                 sys.exit(1)
-        if dependency == 'ansible-playbook':
-            os.environ["PATH"] += os.pathsep + os.path.expanduser("~/.local/bin")
+    else:
+        logging.info(f"{dependency} is already installed at: {which_result}")
 
 # Function to create or configure a resource
 def create_or_configure_resource(exists, create_func, resource_name):
