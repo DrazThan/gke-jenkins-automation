@@ -342,6 +342,7 @@ def main():
 
     # Check and install dependencies
     install_dependency('ansible-playbook', ['pip3', 'install', 'ansible'])
+    os.environ["PATH"] += os.pathsep + os.path.expanduser("~/.local/bin")
     install_dependency('kubectl', ['gcloud', 'components', 'install', 'kubectl'])
     install_dependency('terraform', ['snap', 'install', 'terraform', '--classic'])
     install_dependency('helm', ['snap', 'install', 'helm', '--classic'])
