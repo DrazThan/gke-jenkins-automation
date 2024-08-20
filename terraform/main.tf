@@ -9,6 +9,16 @@ resource "google_container_cluster" "primary" {
   location           = var.zone
   initial_node_count = 3
   deletion_protection = false
+
+  node_config {
+    machine_type = "e2-medium"  # This is a balanced machine type, adjust as needed
+    disk_type    = "pd-ssd"
+    disk_size_gb = 30  # Reduce this value to fit within your quota
+
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/cloud-platform"
+    ]
+  }
 }
 
 resource "google_compute_disk" "jenkins_disk" {
